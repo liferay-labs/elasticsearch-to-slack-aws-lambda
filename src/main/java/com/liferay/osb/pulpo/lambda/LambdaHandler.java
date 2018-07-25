@@ -125,7 +125,7 @@ public class LambdaHandler
 
 			logger.log("countErrorsResponse: \n" + errorsCount);
 
-			if (errorsCount >= 0) {
+			if (errorsCount > 0) {
 				String kibanaErrorsUrl = String.format(
 					_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
 					environment, environment
