@@ -1,0 +1,43 @@
+{
+  "from" : 0,
+  "size" : 1000,
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match_all": {}
+        },
+        {
+          "match_phrase": {
+            "level": {
+              "query": "ERROR"
+            }
+          }
+        },
+        {
+          "match_phrase": {
+            "@log_group": {
+              "query": "/aws/elasticbeanstalk/osb-pulpo-engine-contacts-%s/var/log/containers/osb-pulpo-engine-contacts/osb-pulpo-engine-contacts.log"
+            }
+          }
+        },
+        {
+          "range": {
+            "@timestamp": {
+              "gte": "now-%s"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "match_phrase": {
+            "logger_name": {
+              "query": "com.github.vanroy.springdata.jest.mapper.DefaultErrorMapper"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -26,7 +26,12 @@ import com.liferay.osb.pulpo.lambda.handler.slack.SlackAWSUtil;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.Comparator;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Lambda which checks periodically (by default, every hour) whether there are
@@ -115,25 +120,61 @@ public class LambdaHandler
 			return Optional.of(message);
 		}
 		else {
-			String errorsQueryTemplateFileName = "errorsQueryTemplate.json";
+			String countErrorsQueryTemplateFileName =
+				"countErrorsQueryTemplate.json";
 
-			String errorsQuery = _getQuery(
-				logger, errorsQueryTemplateFileName, environment, interval);
+			String countErrorsQuery = _getQuery(
+				logger, countErrorsQueryTemplateFileName, environment,
+				interval);
 
 			long errorsCount = ElasticSearchAWSUtil.getCount(
-				hostOptional.orElse(_DEFAULT_ES_HOST), errorsQuery, logger);
+				hostOptional.orElse(_DEFAULT_ES_HOST), countErrorsQuery,
+				logger);
 
 			logger.log("countErrorsResponse: \n" + errorsCount);
 
 			if (errorsCount > 0) {
+
+				String searchErrorsQueryTemplateFileName =
+					"searchErrorsQueryTemplate.json";
+
+				String searchErrorsQuery = _getQuery(
+					logger, searchErrorsQueryTemplateFileName, environment,
+					interval);
+
+				Map<String, Long> errorsCountByMessagePrefix =
+					ElasticSearchAWSUtil.getErrorsCountByMessagePrefix(
+						hostOptional.orElse(_DEFAULT_ES_HOST),
+						searchErrorsQuery, _DEFAULT_MAX_PREFIX_LENGTH, logger
+					);
+
+				Set<Map.Entry<String, Long>> messagePrefixErrorCountEntrySet =
+					errorsCountByMessagePrefix.entrySet();
+
+				Stream<Map.Entry<String, Long>> messagePrefixErrorCountStream =
+					messagePrefixErrorCountEntrySet.stream();
+
+				Stream<Map.Entry<String, Long>>
+					messagePrefixErrorCountStreamOrderedByDescCount =
+						messagePrefixErrorCountStream.sorted(_getComparator());
+
+				String messsageDetails =
+					messagePrefixErrorCountStreamOrderedByDescCount.map(
+						entry -> String.format(
+							"• *%s*: %s", entry.getValue(), entry.getKey())
+					).collect(
+						Collectors.joining("\n")
+					);
+
+				String message = String.format(
+					"*%s* errors found in *%s* environment in the last *%s*" +
+						"\n>>>\n %s",
+					errorsCount, environment, interval, messsageDetails);
+
 				String kibanaErrorsUrl = String.format(
 					_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
 					environment, environment
 				);
-
-				String message = String.format(
-					"Errors found in *%s* environment in the last *%s*: *%s*",
-					environment, interval, errorsCount);
 
 				SendMessageToSlackRequest sendMessageToSlackRequest =
 					_getSendMessageToSlackRequest(
@@ -157,6 +198,24 @@ public class LambdaHandler
 			}
 		}
 
+	}
+
+	private Comparator<Map.Entry<String, Long>> _getComparator() {
+		return new Comparator<Map.Entry<String, Long>>() {
+			@Override
+			public int compare(
+				Map.Entry<String, Long> o1, Map.Entry<String, Long> o2) {
+
+				boolean isGreaterThan = o1.getValue() > o2.getValue();
+
+				if (isGreaterThan) {
+					return -1;
+				}
+				else {
+					return 1;
+				}
+			}
+		};
 	}
 
 	private String _getQuery(
@@ -224,6 +283,8 @@ public class LambdaHandler
 			"us-east-1.es.amazonaws.com";
 
 	private static final String _DEFAULT_INTERVAL = "1h";
+
+	private static final int _DEFAULT_MAX_PREFIX_LENGTH = 200;
 
 	private static final String _KIBANA_URL_TEMPLATE =
 		"https://search-pulpo-elasticsearch-log-bu5rbksghqwcoha4yj4sebrx7y." +

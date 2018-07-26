@@ -34,16 +34,19 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.net.URI;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.json.Json;
+import javax.json.JsonArray;
 import javax.json.JsonNumber;
 import javax.json.JsonObject;
 import javax.json.JsonReader;
+import javax.json.JsonValue;
 
 /**
  * @author Ruben Pulido
@@ -53,7 +56,8 @@ public class ElasticSearchAWSUtil {
 	/**
 	 * Executes a count query and returns the result.
 	 *
-	 * @param countRequest input request
+	 * @param host the host
+	 * @param query the query
 	 * @param lambdaLogger lambda logger
 	 * @return long the result of the request
 	 */
@@ -61,7 +65,7 @@ public class ElasticSearchAWSUtil {
 		String host, String query, LambdaLogger lambdaLogger) {
 
 		Request<Void> awsRequest = _createAwsRequest(
-			host, _REQUEST_PATH, null, HttpMethodName.GET, query);
+			host, _COUNT_REQUEST_PATH, null, HttpMethodName.GET, query);
 
 		lambdaLogger.log(
 			"Executing AWS Request: " + awsRequest + "\n for query: " + query +
@@ -85,6 +89,46 @@ public class ElasticSearchAWSUtil {
 		return count;
 	}
 
+	/**
+	 * Executes a search query and returns the the number of hits per message
+	 * prefix.
+	 *
+	 * @param host the host
+	 * @param query the query
+	 * @param lambdaLogger lambda logger
+	 * @return long the result of the request
+	 */
+	public static Map<String, Long>  getErrorsCountByMessagePrefix(
+		String host, String query, 	int maxMessagePrefixLength,
+		LambdaLogger lambdaLogger) {
+
+		Request<Void> awsRequest = _createAwsRequest(
+			host, _SEARCH_REQUEST_PATH, null, HttpMethodName.GET, query);
+
+		lambdaLogger.log(
+			"Executing AWS Request: " + awsRequest + "\n for query: " + query +
+				"\n");
+
+		Response<AmazonWebServiceResponse<String>> response =
+			_executeAwsRequest(awsRequest);
+
+		AmazonWebServiceResponse<String> awsResponse =
+			response.getAwsResponse();
+
+		String result = awsResponse.getResult();
+
+		lambdaLogger.log(
+			"Amazon Web Service Response result: \n" + result + "\n");
+
+		Map<String, Long> errorsCountByMessagePrefix =
+			_getErrorsCountByMessagePrefix(result, maxMessagePrefixLength);
+
+		lambdaLogger.log(
+			"errorsCountByMessagePrefix: " + errorsCountByMessagePrefix + "\n");
+
+		return errorsCountByMessagePrefix;
+	}
+
 	private static long _getCountFromResult(String result) {
 
 		StringReader stringReader = new StringReader(result);
@@ -98,6 +142,44 @@ public class ElasticSearchAWSUtil {
 		JsonNumber jsonNumber = responseJsonObject.getJsonNumber("count");
 
 		return jsonNumber.longValue();
+	}
+
+	private static Map<String, Long> _getErrorsCountByMessagePrefix(
+		String result, int maxMessagePrefixLength) {
+
+		StringReader stringReader = new StringReader(result);
+
+		JsonReader jsonReader = Json.createReader(stringReader);
+
+		JsonObject responseJsonObject = jsonReader.readObject();
+
+		jsonReader.close();
+
+		JsonObject hitsJsonObject = responseJsonObject.getJsonObject("hits");
+
+		JsonArray hitsJsonArray = hitsJsonObject.getJsonArray("hits");
+
+		Stream<JsonValue> hitsStream = hitsJsonArray.stream();
+
+		Map<String, Long> errorsCountByMessagePrefix = hitsStream.map(hit -> {
+			JsonObject hitJsonObject = (JsonObject) hit;
+
+			JsonObject sourceJsonObject =
+				hitJsonObject.getJsonObject("_source");
+
+			String message = sourceJsonObject.getString("message");
+
+			if (message.length() > maxMessagePrefixLength) {
+				message =
+					message.substring(0, maxMessagePrefixLength) + " (...)";
+			}
+
+			return message;
+		}).collect(
+			Collectors.groupingBy(Function.identity(), Collectors.counting())
+		);
+
+		return errorsCountByMessagePrefix;
 	}
 
 	private static Request<Void> _createAwsRequest(
@@ -185,6 +267,8 @@ public class ElasticSearchAWSUtil {
 	private static final String _REGION = System.getenv(
 		SDKGlobalConfiguration.AWS_REGION_ENV_VAR);
 
-	private static final String _REQUEST_PATH = "_count";
+	private static final String _COUNT_REQUEST_PATH = "_count";
+
+	private static final String _SEARCH_REQUEST_PATH = "_search";
 
 }

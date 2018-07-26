@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.Map;
 
 /**
  * @author Ruben Pulido
@@ -38,6 +39,35 @@ public class ElasticSearchAWSUtilTest {
 			host, query, lambdaLogger);
 
 		Assert.assertTrue(count == 0);
+	}
+
+	@Test
+	public void testGetErrorsCountByMessagePrefix()
+		throws IOException, URISyntaxException {
+
+		FileUtil fileUtil = new FileUtil();
+
+		String queryTemplate = fileUtil.fileInClasspathToString(
+			"searchErrorsQueryTemplate.json");
+
+		String query = String.format(queryTemplate, "prod", "10h");
+
+		ElasticSearchAWSUtil elasticSearchAWSUtil = new ElasticSearchAWSUtil();
+
+		// To execute this test locally make sure you have started aws-es-kibana
+		// as follows:
+		// aws-es-kibana -p 9999 search-pulpo-elasticsearch-log-bu5rbksghqwcoha4yj4sebrx7y.us-east-1.es.amazonaws.com &;
+
+		String host = "http://127.0.0.1:9999";
+
+		LambdaLogger lambdaLogger = _getLambdaLogger();
+
+		Map<String, Long> errorsCountByMessagePrefix =
+			elasticSearchAWSUtil.getErrorsCountByMessagePrefix(
+				host, query, 200, lambdaLogger);
+
+		Assert.assertNotNull(errorsCountByMessagePrefix);
+		Assert.assertFalse(errorsCountByMessagePrefix.isEmpty());
 	}
 
 	private LambdaLogger _getLambdaLogger() {

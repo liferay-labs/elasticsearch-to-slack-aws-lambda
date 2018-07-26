@@ -21,7 +21,7 @@ import java.util.Optional;
 public class LambdaHandlerTest {
 
   @Test
-  public void handleRequestTest() {
+  public void handleRequestTestNoLogEntriesFound() {
 
     // Given
     Context context = _getContext();
@@ -49,6 +49,37 @@ public class LambdaHandlerTest {
     Assert.assertTrue(
         message.contains(
             "No log entries found in *prod* environment in the last *1s*"));
+  }
+
+  @Test
+  public void handleRequestTestErrorEntriesFound() {
+
+    // Given
+    Context context = _getContext();
+
+    LambdaHandler lambdaHandler = new LambdaHandler();
+
+    // When
+    CountRequest inputCountRequest = new CountRequest();
+
+    // To execute this test locally make sure you have started aws-es-kibana
+    // as follows:
+    // aws-es-kibana -p 9999 search-pulpo-elasticsearch-log-bu5rbksghqwcoha4yj4sebrx7y.us-east-1.es.amazonaws.com &;
+    inputCountRequest.setHost("http://127.0.0.1:9999");
+    inputCountRequest.setEnvironment("prod");
+    inputCountRequest.setInterval("7d");
+
+    Optional<String> messageOptional = lambdaHandler.handleRequest(
+        inputCountRequest, context);
+
+    // Then
+    Assert.assertTrue(messageOptional.isPresent());
+
+    String message = messageOptional.get();
+
+    Assert.assertTrue(
+        message.contains(
+            "errors found in *prod* environment in the last *2h*"));
   }
 
   private Context _getContext() {
