@@ -161,7 +161,7 @@ public class LambdaHandler
 				String messsageDetails =
 					messagePrefixErrorCountStreamOrderedByDescCount.map(
 						entry -> String.format(
-							"• *%s*: %s", entry.getValue(), entry.getKey())
+							"\u2022 *%s*: %s", entry.getValue(), entry.getKey())
 					).collect(
 						Collectors.joining("\n")
 					);
