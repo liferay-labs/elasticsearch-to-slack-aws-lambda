@@ -38,13 +38,13 @@ public class LambdaHandlerTest {
     inputCountRequest.setEnvironment("prod");
     inputCountRequest.setInterval("1s");
 
-    Optional<String> messageOptional = lambdaHandler.handleRequest(
+    List<String> messages = lambdaHandler.handleRequest(
         inputCountRequest, context);
 
     // Then
-    Assert.assertTrue(messageOptional.isPresent());
+    Assert.assertTrue(!messages.isEmpty());
 
-    String message = messageOptional.get();
+    String message = messages.get(0);
 
     Assert.assertTrue(
         message.contains(
@@ -67,15 +67,15 @@ public class LambdaHandlerTest {
     // aws-es-kibana -p 9999 search-pulpo-elasticsearch-log-bu5rbksghqwcoha4yj4sebrx7y.us-east-1.es.amazonaws.com &;
     inputCountRequest.setHost("http://127.0.0.1:9999");
     inputCountRequest.setEnvironment("prod");
-    inputCountRequest.setInterval("7d");
+    inputCountRequest.setInterval("2h");
 
-    Optional<String> messageOptional = lambdaHandler.handleRequest(
+    List<String> messages = lambdaHandler.handleRequest(
         inputCountRequest, context);
 
     // Then
-    Assert.assertTrue(messageOptional.isPresent());
+    Assert.assertTrue(!messages.isEmpty());
 
-    String message = messageOptional.get();
+    String message = messages.get(0);
 
     Assert.assertTrue(
         message.contains(
