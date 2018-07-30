@@ -1,0 +1,32 @@
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match_all": {}
+        },
+        {
+          "match_phrase": {
+            "@log_group": {
+              "query": "%s"
+            }
+          }
+        },
+        {
+          "match_phrase": {
+            "@message": {
+              "query": "[TRUNCATED MESSAGE]"
+            }
+          }
+        },
+        {
+          "range": {
+            "@timestamp": {
+              "gte": "now-%s"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
