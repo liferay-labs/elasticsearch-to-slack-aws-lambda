@@ -135,59 +135,8 @@ public class LambdaHandler
 
 			if (errorsCount > 0) {
 
-				String searchErrorsQueryTemplateFileName =
-					"searchErrorsQueryTemplate.json";
-
-				String searchErrorsQuery = _getQuery(
-					logger, searchErrorsQueryTemplateFileName, environment,
-					interval);
-
-				Map<String, Long> errorsCountByMessagePrefix =
-					ElasticSearchAWSUtil.getErrorsCountByMessagePrefix(
-						hostOptional.orElse(_DEFAULT_ES_HOST),
-						searchErrorsQuery, _DEFAULT_MAX_PREFIX_LENGTH, logger
-					);
-
-				Set<Map.Entry<String, Long>> messagePrefixErrorCountEntrySet =
-					errorsCountByMessagePrefix.entrySet();
-
-				Stream<Map.Entry<String, Long>> messagePrefixErrorCountStream =
-					messagePrefixErrorCountEntrySet.stream();
-
-				Stream<Map.Entry<String, Long>>
-					messagePrefixErrorCountStreamOrderedByDescCount =
-						messagePrefixErrorCountStream.sorted(_getComparator());
-
-				String messsageDetails =
-					messagePrefixErrorCountStreamOrderedByDescCount.map(
-						entry -> String.format(
-							"\u2022 *%s*: %s", entry.getValue(), entry.getKey())
-					).collect(
-						Collectors.joining("\n")
-					);
-
-				String message = String.format(
-					"*%s* errors found in *%s* environment in the last *%s*" +
-						"\n>>>\n %s",
-					errorsCount, environment, interval, messsageDetails);
-
-				String kibanaErrorsUrl = String.format(
-					_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
-					environment, environment
-				);
-
-				SendMessageToSlackRequest sendMessageToSlackRequest =
-					_getSendMessageToSlackRequest(
-						message, kibanaErrorsUrl, logger);
-
-				logger.log(
-					"Sending slack message: " + sendMessageToSlackRequest
-						+ "\n");
-
-				SlackAWSUtil.sendMessageToSlack(
-					sendMessageToSlackRequest, logger);
-
-				return Optional.of(message);
+				return _groupErrorsAndSendMessageToSlack(
+					logger, hostOptional, interval, environment, errorsCount);
 			}
 			else {
 				logger.log("NOT sending any message to slack\n");
@@ -198,6 +147,65 @@ public class LambdaHandler
 			}
 		}
 
+	}
+
+	private Optional<String> _groupErrorsAndSendMessageToSlack(
+		LambdaLogger logger, Optional<String> hostOptional, String interval,
+		String environment, long errorsCount) {
+
+		String searchErrorsQueryTemplateFileName =
+			"searchErrorsQueryTemplate.json";
+
+		String searchErrorsQuery = _getQuery(
+			logger, searchErrorsQueryTemplateFileName, environment,
+			interval);
+
+		Map<String, Long> errorsCountByMessagePrefix =
+			ElasticSearchAWSUtil.getErrorsCountByMessagePrefix(
+				hostOptional.orElse(_DEFAULT_ES_HOST),
+				searchErrorsQuery, _DEFAULT_MAX_PREFIX_LENGTH, logger
+			);
+
+		Set<Map.Entry<String, Long>> messagePrefixErrorCountEntrySet =
+			errorsCountByMessagePrefix.entrySet();
+
+		Stream<Map.Entry<String, Long>> messagePrefixErrorCountStream =
+			messagePrefixErrorCountEntrySet.stream();
+
+		Stream<Map.Entry<String, Long>>
+			messagePrefixErrorCountStreamOrderedByDescCount =
+				messagePrefixErrorCountStream.sorted(_getComparator());
+
+		String messsageDetails =
+			messagePrefixErrorCountStreamOrderedByDescCount.map(
+				entry -> String.format(
+					"\u2022 *%s*: %s", entry.getValue(), entry.getKey())
+			).collect(
+				Collectors.joining("\n")
+			);
+
+		String message = String.format(
+			"*%s* errors found in *%s* environment in the last *%s*" +
+				"\n>>>\n %s",
+			errorsCount, environment, interval, messsageDetails);
+
+		String kibanaErrorsUrl = String.format(
+			_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
+			environment, environment
+		);
+
+		SendMessageToSlackRequest sendMessageToSlackRequest =
+			_getSendMessageToSlackRequest(
+				message, kibanaErrorsUrl, logger);
+
+		logger.log(
+			"Sending slack message: " + sendMessageToSlackRequest
+				+ "\n");
+
+		SlackAWSUtil.sendMessageToSlack(
+			sendMessageToSlackRequest, logger);
+
+		return Optional.of(message);
 	}
 
 	private Comparator<Map.Entry<String, Long>> _getComparator() {
