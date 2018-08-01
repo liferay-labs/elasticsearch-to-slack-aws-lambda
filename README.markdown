@@ -1,4 +1,4 @@
-# AWS Lambda for periodically checking log messages in Elasticsearch and sending a message to slack if there are no messages or there are errors:
+# AWS Lambda for periodically checking log messages in Elasticsearch and sending a message to slack if there are no messages or there are errors or truncated messages:
 
 Lambda which checks periodically (by default, every hour) whether there
 are log messages in Elasticsearch.
@@ -11,8 +11,10 @@ If there are log messages, it checks whether there are any errors in the
 
 If there are errors it sends a message to a Slack channel.
 
-If there are log entries and there are no errors, no message is sent to
-Slack.
+If there are log messages, it checks whether there are any truncated
+messages in the last interval.
+
+If there are truncated messages it sends a message to a Slack channel.
 
 A parameter of type
 `com.liferay.osb.pulpo.lambda.handler.elasticsearch.CountRequest` can be

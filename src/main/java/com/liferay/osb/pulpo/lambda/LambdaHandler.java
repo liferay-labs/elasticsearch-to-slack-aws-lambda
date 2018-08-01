@@ -26,7 +26,9 @@ import com.liferay.osb.pulpo.lambda.handler.slack.SlackAWSUtil;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -45,21 +47,24 @@ import java.util.stream.Stream;
  *
  * If there are errors it sends a message to a Slack channel.
  *
- * If there are log entries and there are no errors, no message is sent to
- * Slack.
+ * If there are log messages, it checks whether there are any errors in the last
+ * interval.
+ *
+ * If there are log messages, it checks whether there are any truncated messages
+ * in the last interval.
+ *
+ * If there are truncated messages it sends a message to a Slack channel.
  *
  * @author Ruben Pulido
  */
 public class LambdaHandler
-	implements RequestHandler<CountRequest, Optional<String>> {
+	implements RequestHandler<CountRequest, List<String>> {
 
 	@Override
-	public Optional<String> handleRequest(
+	public List<String> handleRequest(
 		CountRequest inputCountRequest, Context context) {
 
 		LambdaLogger logger = context.getLogger();
-
-		CountRequest countRequest = new CountRequest();
 
 		Optional<CountRequest> optionalInputCountRequest =
 			Optional.of(inputCountRequest);
@@ -86,118 +91,217 @@ public class LambdaHandler
 
 		String environment = environmentOptional.orElse(_DEFAULT_ENVIRONMENT);
 
-		String queryTemplateFileName = "queryTemplate.json";
+		long logEntriesCount = _getLogEntriesCount(
+			logger, hostOptional, interval, environment);
 
-		String query = _getQuery(
-			logger, queryTemplateFileName, environment, interval);
+		System.out.println(logEntriesCount);
 
-		long logEntriesCount = ElasticSearchAWSUtil.getCount(
-			hostOptional.orElse(_DEFAULT_ES_HOST), query, logger);
-
-		logger.log("countLogEntriesResponse: \n" + logEntriesCount);
-
-		Optional<String> messageOptional;
+		List<String> messages = new ArrayList();
 
 		if (logEntriesCount == 0) {
-			String kibanaUrl = String.format(
-				_KIBANA_URL_TEMPLATE, interval, environment, environment,
-				environment
-			);
+			String message = _sendNoLogsFoundMessageToSlack(
+				logger, interval, environment);
 
-			String message = String.format(
-				"No log entries found in *%s* environment in the last *%s*",
-				environment, interval);
-
-			SendMessageToSlackRequest sendMessageToSlackRequest =
-				_getSendMessageToSlackRequest(message, kibanaUrl, logger);
-
-			logger.log(
-				"Sending slack message: " + sendMessageToSlackRequest + "\n");
-
-			SlackAWSUtil.sendMessageToSlack(
-				sendMessageToSlackRequest, logger);
-
-			return Optional.of(message);
+			messages.add(message);
 		}
 		else {
-			String countErrorsQueryTemplateFileName =
-				"countErrorsQueryTemplate.json";
-
-			String countErrorsQuery = _getQuery(
-				logger, countErrorsQueryTemplateFileName, environment,
-				interval);
-
-			long errorsCount = ElasticSearchAWSUtil.getCount(
-				hostOptional.orElse(_DEFAULT_ES_HOST), countErrorsQuery,
-				logger);
-
-			logger.log("countErrorsResponse: \n" + errorsCount);
+			long errorsCount = _getErrorsCount(
+				logger, hostOptional, interval, environment);
 
 			if (errorsCount > 0) {
 
-				String searchErrorsQueryTemplateFileName =
-					"searchErrorsQueryTemplate.json";
+				String errorsMessage = _groupErrorsAndSendMessageToSlack(
+					logger, hostOptional, interval, environment, errorsCount);
 
-				String searchErrorsQuery = _getQuery(
-					logger, searchErrorsQueryTemplateFileName, environment,
-					interval);
-
-				Map<String, Long> errorsCountByMessagePrefix =
-					ElasticSearchAWSUtil.getErrorsCountByMessagePrefix(
-						hostOptional.orElse(_DEFAULT_ES_HOST),
-						searchErrorsQuery, _DEFAULT_MAX_PREFIX_LENGTH, logger
-					);
-
-				Set<Map.Entry<String, Long>> messagePrefixErrorCountEntrySet =
-					errorsCountByMessagePrefix.entrySet();
-
-				Stream<Map.Entry<String, Long>> messagePrefixErrorCountStream =
-					messagePrefixErrorCountEntrySet.stream();
-
-				Stream<Map.Entry<String, Long>>
-					messagePrefixErrorCountStreamOrderedByDescCount =
-						messagePrefixErrorCountStream.sorted(_getComparator());
-
-				String messsageDetails =
-					messagePrefixErrorCountStreamOrderedByDescCount.map(
-						entry -> String.format(
-							"\u2022 *%s*: %s", entry.getValue(), entry.getKey())
-					).collect(
-						Collectors.joining("\n")
-					);
-
-				String message = String.format(
-					"*%s* errors found in *%s* environment in the last *%s*" +
-						"\n>>>\n %s",
-					errorsCount, environment, interval, messsageDetails);
-
-				String kibanaErrorsUrl = String.format(
-					_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
-					environment, environment
-				);
-
-				SendMessageToSlackRequest sendMessageToSlackRequest =
-					_getSendMessageToSlackRequest(
-						message, kibanaErrorsUrl, logger);
-
-				logger.log(
-					"Sending slack message: " + sendMessageToSlackRequest
-						+ "\n");
-
-				SlackAWSUtil.sendMessageToSlack(
-					sendMessageToSlackRequest, logger);
-
-				return Optional.of(message);
+				messages.add(errorsMessage);
 			}
-			else {
-				logger.log("NOT sending any message to slack\n");
 
-				Optional<String> emptyMessage = Optional.empty();
+			long truncatedMessagesCount = _getTruncatedMessagesCount(
+				logger, hostOptional, interval, environment);
 
-				return emptyMessage;
+			if (truncatedMessagesCount > 0) {
+
+				String truncatedMessagesMessage =
+					_getTruncatedMessagesCountAndSendMessageToSlack(
+						logger, interval, environment, truncatedMessagesCount);
+
+				messages.add(truncatedMessagesMessage);
 			}
 		}
 
+		if (messages.size() == 0) {
+			logger.log("NO message was sent to slack\n");
+		}
+
+		return messages;
+	}
+
+	private long _getLogEntriesCount(
+		LambdaLogger logger, Optional<String> hostOptional, String interval,
+		String environment) {
+
+		String queryTemplateFileName = "queryTemplate.json";
+
+		String countLogsQuery = _getQuery(
+			logger, queryTemplateFileName, environment, interval);
+
+		long logEntriesCount = ElasticSearchAWSUtil.getCount(
+			hostOptional.orElse(_DEFAULT_ES_HOST), countLogsQuery, logger);
+
+		logger.log("countLogEntriesResponse: \n" + logEntriesCount);
+		return logEntriesCount;
+	}
+
+	private String _sendNoLogsFoundMessageToSlack(
+		LambdaLogger logger, String interval, String environment) {
+
+		String kibanaUrl = String.format(
+			_KIBANA_URL_TEMPLATE, interval, environment, environment,
+			environment
+		);
+
+		String message = String.format(
+			"No log entries found in *%s* environment in the last *%s*",
+			environment, interval);
+
+		SendMessageToSlackRequest sendMessageToSlackRequest =
+			_getSendMessageToSlackRequest(message, kibanaUrl, logger);
+
+		logger.log(
+			"Sending slack message: " + sendMessageToSlackRequest + "\n");
+
+		SlackAWSUtil.sendMessageToSlack(sendMessageToSlackRequest, logger);
+		return message;
+	}
+
+	private String _getTruncatedMessagesCountAndSendMessageToSlack(
+		LambdaLogger logger, String interval, String environment,
+		long truncatedMessagesCount) {
+
+		String truncatedMessagesMessage = String.format(
+			"*%s* messages truncated in *%s* environment in the last " +
+				"*%s*",
+			truncatedMessagesCount, environment, interval);
+
+		String kibanaTruncatedMessagesUrl = String.format(
+			_KIBANA_MESSAGES_TRUNCATED_URL_TEMPLATE, interval,
+			environment, environment, environment
+		);
+
+		String encodedKibanaTruncatedMessagesUrl =
+			kibanaTruncatedMessagesUrl.replaceAll(" ", "%20");
+
+		SendMessageToSlackRequest sendMessageToSlackRequest =
+			_getSendMessageToSlackRequest(
+				truncatedMessagesMessage,
+				encodedKibanaTruncatedMessagesUrl, logger);
+
+		logger.log(
+			"Sending slack message: " + sendMessageToSlackRequest
+				+ "\n");
+
+		SlackAWSUtil.sendMessageToSlack(
+			sendMessageToSlackRequest, logger);
+		return truncatedMessagesMessage;
+	}
+
+	private long _getTruncatedMessagesCount(
+		LambdaLogger logger, Optional<String> hostOptional, String interval,
+		String environment) {
+
+		String countTruncatedMessagesQueryTemplateFileName =
+			"countTruncatedMessagesQueryTemplate.json";
+
+		String countTruncatedMessagesQuery = _getQuery(
+			logger, countTruncatedMessagesQueryTemplateFileName, environment,
+			interval);
+
+		long truncatedMessagesCount = ElasticSearchAWSUtil.getCount(
+			hostOptional.orElse(_DEFAULT_ES_HOST), countTruncatedMessagesQuery,
+			logger);
+
+		logger.log(
+			"countTruncatedMessagesResponse: \n" + truncatedMessagesCount);
+
+		return truncatedMessagesCount;
+	}
+
+	private long _getErrorsCount(
+		LambdaLogger logger, Optional<String> hostOptional, String interval,
+		String environment) {
+
+		String countErrorsQueryTemplateFileName =
+			"countErrorsQueryTemplate.json";
+
+		String countErrorsQuery = _getQuery(
+			logger, countErrorsQueryTemplateFileName, environment,
+			interval);
+
+		long errorsCount = ElasticSearchAWSUtil.getCount(
+			hostOptional.orElse(_DEFAULT_ES_HOST), countErrorsQuery,
+			logger);
+
+		logger.log("countErrorsResponse: \n" + errorsCount);
+		return errorsCount;
+	}
+
+	private String _groupErrorsAndSendMessageToSlack(
+		LambdaLogger logger, Optional<String> hostOptional, String interval,
+		String environment, long errorsCount) {
+
+		String searchErrorsQueryTemplateFileName =
+			"searchErrorsQueryTemplate.json";
+
+		String searchErrorsQuery = _getQuery(
+			logger, searchErrorsQueryTemplateFileName, environment,
+			interval);
+
+		Map<String, Long> errorsCountByMessagePrefix =
+			ElasticSearchAWSUtil.getErrorsCountByMessagePrefix(
+				hostOptional.orElse(_DEFAULT_ES_HOST),
+				searchErrorsQuery, _DEFAULT_MAX_PREFIX_LENGTH, logger
+			);
+
+		Set<Map.Entry<String, Long>> messagePrefixErrorCountEntrySet =
+			errorsCountByMessagePrefix.entrySet();
+
+		Stream<Map.Entry<String, Long>> messagePrefixErrorCountStream =
+			messagePrefixErrorCountEntrySet.stream();
+
+		Stream<Map.Entry<String, Long>>
+			messagePrefixErrorCountStreamOrderedByDescCount =
+				messagePrefixErrorCountStream.sorted(_getComparator());
+
+		String messsageDetails =
+			messagePrefixErrorCountStreamOrderedByDescCount.map(
+				entry -> String.format(
+					"\u2022 *%s*: %s", entry.getValue(), entry.getKey())
+			).collect(
+				Collectors.joining("\n")
+			);
+
+		String message = String.format(
+			"*%s* errors found in *%s* environment in the last *%s*" +
+				"\n>>>\n %s",
+			errorsCount, environment, interval, messsageDetails);
+
+		String kibanaErrorsUrl = String.format(
+			_KIBANA_ERRORS_URL_TEMPLATE, interval, environment,
+			environment, environment
+		);
+
+		SendMessageToSlackRequest sendMessageToSlackRequest =
+			_getSendMessageToSlackRequest(
+				message, kibanaErrorsUrl, logger);
+
+		logger.log(
+			"Sending slack message: " + sendMessageToSlackRequest
+				+ "\n");
+
+		SlackAWSUtil.sendMessageToSlack(
+			sendMessageToSlackRequest, logger);
+
+		return message;
 	}
 
 	private Comparator<Map.Entry<String, Long>> _getComparator() {
@@ -327,4 +431,21 @@ public class LambdaHandler
 			"11e8-8cdd-5fdfb14faa84,interval:auto,query:(language:lucene," +
 			"query:''),sort:!('@timestamp',desc))";
 
+	private static final String _KIBANA_MESSAGES_TRUNCATED_URL_TEMPLATE =
+		"https://search-pulpo-elasticsearch-log-bu5rbksghqwcoha4yj4sebrx7y." +
+			"us-east-1.es.amazonaws.com/_plugin/kibana/app/kibana#/discover/?" +
+			"_g=(refreshInterval:(display:Off,pause:!f,value:0),time:(from:" +
+			"now-%s,mode:quick,to:now))&_a=(columns:!(_source),filters:!((" +
+			"'$state':(store:appState),meta:(alias:!n,disabled:!f," +
+			"index:c708e7c0-8e69-11e8-8cdd-5fdfb14faa84,key:'@log_group'," +
+			"negate:!f,params:(query:%s,type:phrase),type:phrase,value:%s)" +
+			",query:(match:('@log_group':(query:%s,type:phrase))))," +
+			"('$state':(store:appState),meta:(alias:!n,disabled:!f," +
+			"index:c708e7c0-8e69-11e8-8cdd-5fdfb14faa84,key:'@message'," +
+			"negate:!f,params:(query:'[truncated message]'," +
+			"type:phrase),type:phrase,value:'[truncated message]')," +
+			"query:(match:('@message':(query:'[truncated message]'," +
+			"type:phrase))))),index:c708e7c0-8e69-11e8-8cdd-5fdfb14faa84," +
+			"interval:auto,query:(language:lucene,query:'')," +
+			"sort:!('@timestamp',desc))";
 }
